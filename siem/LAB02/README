@@ -1,1 +1,2 @@
-
+Análisis de tráfico DNS real capturado con Wireshark sobre interfaz Wi-Fi.
+Se generaron queries de tipo A, MX, TXT y NS desde CMD y se analizó cada paquete capa por capa siguiendo el modelo OSI.
