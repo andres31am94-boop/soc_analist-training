@@ -1,2 +1,415 @@
 Análisis de tráfico DNS real capturado con Wireshark sobre interfaz Wi-Fi.
 Se generaron queries de tipo A, MX, TXT y NS desde CMD y se analizó cada paquete capa por capa siguiendo el modelo OSI.
+
+
+#Lab 02 — Análisis de Tráfico DNS con Wireshark
+
+
+---
+
+## Descripción
+
+Análisis de tráfico DNS real capturado con Wireshark sobre interfaz Wi-Fi en Windows.
+Se generaron queries de tipo **A, MX, TXT y NS** desde PowerShell/CMD y se analizó
+cada paquete capa por capa siguiendo el modelo OSI, identificando hallazgos de seguridad reales.
+
+---
+
+## 🎯 Objetivo
+
+- [x] Capturar tráfico DNS real con filtro
+- [x] Analizar estructura de paquetes DNS capa por capa (OSI L1→L7)
+- [x] Distinguir entre queries tipo A, MX, TXT y NS
+- [x] Correlacionar par query → respuesta por Transaction ID
+- [x] Identificar hallazgos de seguridad en tráfico DNS real
+- [x] Documentar evidencia para reporte profesional
+
+---
+
+## Entorno de Laboratorio
+
+| Campo | Detalle |
+|---|---|
+| **Sistema Operativo** | Windows |
+| **Herramienta** | Wireshark 4.6.4 |
+| **Interfaz capturada** | Wi-Fi |
+| **IP Local** | `192.168.248.42` |
+| **Servidor DNS** | `192.168.248.24` |
+| **MAC Origen** | `02:1b:35:9b:c3:63` (Locally Administered)
+| **Filtro de display** | `dns` |
+| **Total paquetes DNS** | ~100 (incluyendo tráfico de fondo) |
+
+---
+
+## 📡 Comandos Ejecutados
+
+```powershell
+nslookup google.com
+nslookup -type=MX gmail.com
+nslookup -type=TXT google.com
+nslookup -type=NS cloudflare.com
+```
+
+---
+
+## Análisis de Paquetes — Capa por Capa
+
+---
+
+### 1️⃣ DNS Query tipo A → google.com
+
+> **Frame 2336** | 70 bytes | `192.168.248.42:57093` → `192.168.248.24:53`
+
+![Query A google.com](screenshots/01_query_google_A.png)
+
+#### Análisis por capas OSI:
+
+| Capa OSI | Campo | Valor | Análisis |
+|---|---|---|---|
+| **L2 Ethernet** | MAC Origen | `02:1b:35:9b:c3:63` | ⚠️ LG bit=1 → Locally Administered → WSL2/VM |
+| **L2 Ethernet** | MAC Destino | `24:e4:c8:07:be:45` | Router FiberhomeTel (gateway) |
+| **L3 IPv4** | IP Origen | `192.168.248.42` | Máquina local Windows |
+| **L3 IPv4** | IP Destino | `192.168.248.24` | Servidor DNS local |
+| **L3 IPv4** | TTL | `128` | ✅ Confirma sistema Windows (Linux=64) |
+| **L3 IPv4** | Protocolo | `17 = UDP` | ✅ Correcto para DNS |
+| **L4 UDP** | Puerto Origen | `57093` | Puerto efímero (>49152) |
+| **L4 UDP** | Puerto Destino | `53` | ✅ DNS estándar |
+| **L7 DNS** | Transaction ID | `0x0002` | ⚠️ ID predecible (muy bajo) |
+| **L7 DNS** | Query Type | `A (1)` | Solicita dirección IPv4 |
+| **L7 DNS** | Query Name | `google.com` | |
+| **L7 DNS** | Recursion Desired | `1` | Resolver busca por nosotros |
+| **L7 DNS** | Response In | `Frame 2337` | |
+
+---
+
+### 2️⃣ DNS Response tipo A → google.com
+
+> **Frame 2337** | `192.168.248.24:53` → `192.168.248.42:57093` | ⏱️ 1.493ms
+
+![Response A google.com](screenshots/02_response_google_A.png)
+
+| Campo | Valor | Análisis |
+|---|---|---|
+| **Transaction ID** | `0x0002` | ✅ Coincide con query |
+| **QR Flag** | `1 = Response` | ✅ Es respuesta |
+| **Reply Code** | `0 = No error` | ✅ Resolución exitosa |
+| **Answer RRs** | `1` | Una dirección IP devuelta |
+| **IP Devuelta** | `142.251.132.174` | ✅ IP legítima de Google |
+| **TTL** | `300 segundos` | 5 minutos en caché |
+| **Recursion Available** | `0 = NO` | ⚠️ Este servidor no hace recursión |
+| **Tiempo respuesta** | `1.493ms` | ✅ DNS local muy rápido |
+
+```
+✅ Verificación anti-spoofing:
+   CMD devolvió:      142.251.132.174
+   Wireshark capturó: 142.251.132.174
+   → Coinciden perfectamente → sin DNS Spoofing
+```
+
+---
+
+### 3️⃣ DNS Response tipo MX → gmail.com
+
+> **Frame par** | ⏱️ 76.557ms | Answer RRs: 5
+
+![Response MX gmail.com](screenshots/03_response_gmail_MX.png)
+
+| Campo | Valor |
+|---|---|
+| **Transaction ID** | `0x0002` |
+| **Answer RRs** | `5` servidores de correo |
+| **TTL** | `3600 segundos = 1 hora` |
+| **Recursion Available** | `1 = SÍ` ← diferente al query A |
+
+#### Servidores de correo devueltos (orden por prioridad):
+
+| Prioridad | Servidor | Descripción |
+|---|---|---|
+| **5** | `gmail-smtp-in.l.google.com` | 🥇 Primero (menor = mayor prioridad) |
+| **10** | `alt1.gmail-smtp-in.l.google.com` | Segundo |
+| **20** | `alt2.gmail-smtp-in.l.google.com` | Tercero |
+| **30** | `alt3.gmail-smtp-in.l.google.com` | Cuarto |
+| **40** | `alt4.gmail-smtp-in.l.google.com` | 🔚 Último recurso |
+
+> 💡 **Nota de seguridad:** Los registros MX son el primer objetivo en ataques de phishing dirigido.
+> Conocer la infraestructura de correo de un dominio permite craftar ataques SMTP más convincentes.
+
+---
+
+### 4️⃣ DNS Response tipo TXT → google.com
+
+> **Dos respuestas capturadas** | Primera: 0 answers | Segunda: 13 answers | ⏱️ 75.945ms
+
+![TXT CMD](screenshots/04_cmd_google_TXT.png)
+![TXT Wireshark](screenshots/05_wireshark_google_TXT.png)
+
+#### Hallazgo interesante — Dos respuestas distintas:
+
+```
+Primera respuesta:  Answer RRs = 0  ❌ (forwarder sin caché)
+Segunda respuesta:  Answer RRs = 13 ✅ (resolver upstream)
+→ El DNS local (192.168.248.24) actúa como forwarder,
+  no como resolver completo para algunos registros
+```
+
+#### Los 13 registros TXT revelan el stack tecnológico de Google:
+
+| Registro TXT | Proveedor | Información revelada |
+|---|---|---|
+| `MS=E4A68B9AB2BB9670...` | Microsoft | Integración Microsoft 365 |
+| `google-site-verification=...` (×3) | Google | Search Console |
+| `facebook-domain-verification=...` | Meta/Facebook | Integración con Meta |
+| `docusign=...` (×2) | DocuSign | ⚠️ Firma electrónica corporativa |
+| `apple-domain-verification=...` | Apple | Integración Apple |
+| `onetrust-domain-verification=...` (×2) | OneTrust | Gestión de privacidad |
+| `globalsign-smime-dv=...` | GlobalSign | ⚠️ CA para certificados S/MIME |
+| `cisco-ci-domain-verification=...` | Cisco | ⚠️ Infraestructura de red Cisco |
+| `v=spf1 include:_spf.google.com ~all` | SPF | ⚠️ Política de correo (softfail) |
+
+> 🚨 **Relevancia en pentesting:** Con solo una query TXT se puede mapear
+> el stack tecnológico completo de una empresa objetivo en segundos.
+
+---
+
+### 5️⃣ DNS Response tipo NS → cloudflare.com
+
+> **Frame par** | ⏱️ 79.968ms | Answer RRs: 5 | Additional RRs: 14
+
+![NS CMD](screenshots/06_cmd_cloudflare_NS.png)
+![NS Wireshark](screenshots/07_wireshark_cloudflare_NS.png)
+
+| Campo | Valor |
+|---|---|
+| **Transaction ID** | `0x0002` |
+| **Answer RRs** | `5` name servers |
+| **Additional RRs** | `14` (IPs de cada NS incluidas automáticamente) |
+| **TTL** | `86400 segundos = 24 horas` |
+
+#### Name Servers de Cloudflare:
+
+| NS | IPv4 | IPv6 |
+|---|---|---|
+| `ns3.cloudflare.com` | `162.159.0.33` / `162.159.7.226` | `2400:cb00:2049:1::a29f:21` |
+| `ns4.cloudflare.com` | `162.159.1.33` / `162.159.8.55` | `2400:cb00:2049:1::a29f:121` |
+| `ns5.cloudflare.com` | `162.159.2.9` / `162.159.9.55` | — |
+| `ns6.cloudflare.com` | `162.159.3.11` / `162.159.5.6` | `2400:cb00:2049:1::a29f:30b` |
+| `ns7.cloudflare.com` | — | `2400:cb00:2049:1::a29f:408` |
+
+> 💡 Todos en rango `162.159.X.X` → red propia de Cloudflare.
+> Cloudflare gestiona su propio DNS → infraestructura muy robusta y difícil de atacar.
+
+---
+
+## 📊 Resumen de Capturas
+
+| # | Dominio | Tipo | TxID | Answers | TTL | Tiempo resp. |
+|---|---|---|---|---|---|---|
+| 1 | `google.com` | A | `0x0002` | 1 IP | 300s (5 min) | 1.49ms |
+| 2 | `gmail.com` | MX | `0x0002` | 5 servidores | 3600s (1h) | 76.55ms |
+| 3 | `google.com` | TXT | `0x0002` | 13 registros | variable | 75.94ms |
+| 4 | `cloudflare.com` | NS | `0x0002` | 5 NS + 14 adicionales | 86400s (24h) | 79.96ms |
+
+---
+
+## ⚠️ Hallazgos de Seguridad
+
+### 🔴 ALTA — Transaction ID Predecible
+
+```
+Evidencia: TODOS los paquetes capturados
+TxID = 0x0002 en cada query sin excepción
+```
+
+**Riesgo:** DNS Cache Poisoning (Kaminsky Attack 2008)
+
+**Cómo se explota:**
+```
+1. Atacante observa que TxID siempre es 0x0002
+2. Envía respuesta DNS falsa con TxID=0x0002
+3. Si llega antes que el servidor legítimo →
+   el resolver guarda IP maliciosa en caché
+4. Todos los usuarios de ese resolver →
+   redirigidos al servidor del atacante
+```
+
+**Mitigación:** RFC 5452 — randomización criptográfica del Transaction ID
+
+---
+
+### 🟡 MEDIA — Comportamiento Inconsistente del DNS Local
+
+```
+Evidencia: Comparación de flags entre respuestas
+
+google.com A  → Recursion available: 0 (NO)
+gmail.com MX  → Recursion available: 1 (SÍ)
+cloudflare NS → Recursion available: 1 (SÍ)
+google.com TXT→ Primera respuesta vacía (0 answers)
+```
+
+**Análisis:** El servidor `192.168.248.24` actúa como forwarder inconsistente.
+Para algunos registros consulta upstream, para otros responde desde caché.
+
+**Mitigación:** Configurar DNS resolver consistente (Pi-hole, Unbound, o DoH)
+
+---
+
+### 🟡 MEDIA — Exposición de Stack Tecnológico via TXT
+
+```
+Evidencia: Query TXT google.com → 13 registros
+Revelaron: Microsoft, DocuSign, Cisco, GlobalSign,
+           Apple, OneTrust, Meta/Facebook
+```
+
+**Riesgo:** En un pentest, esta información permite:
+- Identificar proveedores con posibles vulnerabilidades
+- Craftar ataques de phishing con proveedores reales
+- Mapear la superficie de ataque del objetivo
+
+**Mitigación:** Publicar solo registros TXT estrictamente necesarios (SPF, DKIM, DMARC)
+
+---
+
+### 🟢 BAJA — DNS sin Cifrar (UDP Puerto 53)
+
+```
+Evidencia: Todo el tráfico capturado en texto plano
+```
+
+**Riesgo:** Cualquier nodo en la red puede ver todos los dominios consultados → privacidad y reconocimiento
+
+**Mitigación:** Implementar DNS over HTTPS (DoH) puerto 443 o DNS over TLS (DoT) puerto 853
+
+---
+
+### 🟢 BAJA — MAC Locally Administered
+
+```
+Evidencia: MAC 02:1b:35:9b:c3:63 → LG bit = 1
+```
+
+**Análisis:** Indica interfaz virtual (WSL2, VM, VPN adapter). No es la MAC de fábrica.
+En SOC corporativo requiere verificación y documentación.
+
+---
+
+## 🔎 Filtros Wireshark Utilizados
+
+```wireshark
+# Todo el tráfico DNS
+dns
+
+# Solo queries
+dns.flags.response == 0
+
+# Solo respuestas
+dns.flags.response == 1
+
+# Por tipo de registro
+dns.qry.type == 1     # A     → IPv4
+dns.qry.type == 2     # NS    → Name Servers
+dns.qry.type == 15    # MX    → Mail Exchange
+dns.qry.type == 16    # TXT   → Text records
+dns.qry.type == 28    # AAAA  → IPv6
+
+# Por dominio exacto
+dns.qry.name == "google.com"
+dns.qry.name == "gmail.com"
+dns.qry.name == "cloudflare.com"
+
+# Ir a frame específico
+frame.number == 2337
+
+# Todos mis queries del lab juntos
+(dns.qry.name == "google.com" ||
+ dns.qry.name == "gmail.com"  ||
+ dns.qry.name == "cloudflare.com") && dns.flags.response == 0
+```
+
+---
+
+## 🧠 Lecciones Aprendidas
+
+### Técnicas
+- El tráfico DNS viaja en **texto plano** — cualquiera en la red ve qué dominios consultas
+- El **Transaction ID debe ser aleatorio** — un ID predecible es vulnerable a Cache Poisoning
+- El **TTL del IPv4 revela el OS**: 128=Windows, 64=Linux, 255=Cisco/routers
+- Una **MAC locally administered** (LG bit=1) indica interfaz virtual, no hardware físico
+- Los **registros TXT** son una mina de información sobre el stack tecnológico de una empresa
+- Los **registros NS** con Additional Records incluyen las IPs de los NS automáticamente
+- Un **forwarder DNS** puede dar respuestas vacías si no tiene el registro en caché
+
+### Operacionales (mentalidad SOC)
+- DNS es uno de los vectores más usados para **tunneling, exfiltración y C2**
+- Monitorear **Transaction IDs bajos o secuenciales** puede indicar herramientas automatizadas
+- El tráfico DNS revela el **comportamiento e intenciones** de un host en la red
+- **Subdominios muy largos** en queries DNS → posible DNS Tunneling (T1071.004)
+- Una query MX inesperada desde una workstation → posible **reconocimiento de infraestructura**
+- Comparar **tiempos de respuesta**: DNS local < 5ms es normal, >50ms indica consulta upstream
+
+---
+
+## 🔗 Relación con MITRE ATT&CK
+
+| Técnica | ID | Relevancia con este lab |
+|---|---|---|
+| Application Layer Protocol: DNS | [T1071.004](https://attack.mitre.org/techniques/T1071/004/) | C2 y exfiltración por DNS |
+| Gather Victim Network Info: DNS | [T1590.002](https://attack.mitre.org/techniques/T1590/002/) | Reconocimiento via MX, NS, TXT |
+| Resource Development: DNS Server | [T1584.002](https://attack.mitre.org/techniques/T1584/002/) | Infraestructura de ataque DNS |
+| Adversary-in-the-Middle | [T1557](https://attack.mitre.org/techniques/T1557/) | DNS Cache Poisoning (TxID predecible) |
+
+---
+
+## 📁 Estructura del Repositorio
+
+```
+lab-01-wireshark-dns/
+├── README.md                          ← este archivo
+├── captures/
+│   └── lab1_dns.pcapng                ← captura completa
+├── screenshots/
+│   ├── 01_query_google_A.png
+│   ├── 02_response_google_A.png
+│   ├── 03_response_gmail_MX.png
+│   ├── 04_cmd_google_TXT.png
+│   ├── 05_wireshark_google_TXT.png
+│   ├── 06_cmd_cloudflare_NS.png
+│   └── 07_wireshark_cloudflare_NS.png
+└── filters/
+    └── filtros_wireshark.md
+```
+
+---
+
+## 📚 Referencias
+
+- [RFC 1035 — Domain Names Implementation and Specification](https://www.rfc-editor.org/rfc/rfc1035)
+- [RFC 5452 — Measures for Making DNS More Resilient against Forged Answers](https://www.rfc-editor.org/rfc/rfc5452)
+- [RFC 7858 — DNS over TLS](https://www.rfc-editor.org/rfc/rfc7858)
+- [RFC 8484 — DNS over HTTPS](https://www.rfc-editor.org/rfc/rfc8484)
+- [MITRE ATT&CK T1071.004 — DNS](https://attack.mitre.org/techniques/T1071/004/)
+- [Wireshark DNS Display Filters](https://www.wireshark.org/docs/dfref/d/dns.html)
+- [Kaminsky DNS Attack Explained](https://www.cs.cornell.edu/~shmat/shmat_securecomm10.pdf)
+
+---
+
+## 👤 Autor
+
+| Campo | Info |
+|---|---|
+| **Nombre** | Andre |
+| **Fecha** | Marzo 2026 |
+| **Área** | Ciberseguridad — SOC / Blue Team |
+| **Herramientas** | Wireshark, nslookup, CMD/PowerShell |
+
+---
+
+<div align="center">
+
+**[⬆ Volver al repositorio principal](../README.md)**
+
+*Laboratorio realizado como parte del proceso de formación en ciberseguridad aplicada.*
+*Todos los análisis fueron realizados sobre tráfico propio en entorno controlado.*
+
+</div>
