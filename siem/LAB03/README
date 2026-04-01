@@ -41,7 +41,7 @@ tcp.flags.syn == 1 && tcp.flags.ack == 0
 
 La IP `10.251.96.4` generó más de 16,000 paquetes SYN hacia `10.251.96.5`. El análisis de los flags TCP reveló el patrón **SYN → SYN-ACK → ACK**, confirmando que el atacante completó el three-way handshake en cada puerto — esto corresponde a un **TCP Connect Scan (-sT de Nmap)**.
 
-![Port Scan](Captura de pantalla 2026-03-31 175517.png)
+![Port Scan](siem/LAB03/evidencia/Captura de pantalla 2026-03-31 175517.png)
 
 **Rango de puertos escaneados:** 1 – 1024 (puertos well-known)
 
